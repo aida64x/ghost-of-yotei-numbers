@@ -1,10 +1,11 @@
 'use strict';
 
-const VIEWS = [
-  ['combat', 'Combat'], ['loadout', 'Loadout'], ['armor', 'Armor'], ['weapons', 'Weapons and tools'], ['charms', 'Charms'],
-  ['skills', 'Skills and progression'], ['enemies', 'Enemies'], ['duels', 'Duels and bounties'],
-  ['damage', 'Damage'], ['about', 'About the data'],
+const NAV = [
+  ['Player', [['combat', 'Parry and dodge'], ['loadout', 'Loadout'], ['armor', 'Armor'], ['weapons', 'Weapons and tools'], ['charms', 'Charms'], ['skills', 'Skills and progression']]],
+  ['Enemies', [['enemies', 'Enemies'], ['duels', 'Duels and bounties'], ['damage', 'Damage']]],
+  ['Site', [['about', 'About']]],
 ];
+const VIEWS = NAV.flatMap(([, items]) => items);
 const DIFFS = ['Easy', 'Medium', 'Hard', 'Lethal'];
 const FPS = 60;
 const MAX_F32 = 3e38;
@@ -14,34 +15,33 @@ const state = { diff: 1, charm: false, chest: 'none', enemy: 'none', enemyView: 
 
 /* ---------- helpers ---------- */
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const num = v => (v === null || v === undefined) ? '—' : (+(+v).toFixed(3)).toLocaleString('en-US');
+const num = v => (v === null || v === undefined) ? '-' : (+(+v).toFixed(3)).toLocaleString('en-US');
 const human = s => String(s).replace(/_/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
 const sign = v => (v >= 0 ? '+' : '−');
 function fmtVal(fmt, v) {
-  if (v === null || v === undefined) return '—';
+  if (v === null || v === undefined) return '<span class="muted">-</span>';
   const a = Math.abs(v);
-  if (fmt === 'window') return `${sign(v)}${a.toFixed(3)} s <span class="muted">(${sign(v)}${Math.round(a * FPS)} f)</span>`;
+  if (fmt === 'window') return `<span title="${sign(v)}${a.toFixed(3)} s">${sign(v)}${Math.round(a * FPS)} f</span>`;
   if (fmt === 'pct') return `${sign(v)}${+(a * 100).toFixed(2)}%`;
   return `${sign(v)}${+a.toFixed(4)}`;
 }
 const frames = sec => Math.round(sec * FPS);
 const ms = sec => Math.round(sec * 1000);
-/* At 30 fps a press can only register every 33 ms, so a window of f frames at 60 fps gives
-   either floor(f/2) or ceil(f/2) 30 fps frames depending on where the strike falls; the
-   average is unchanged. Returns the real time in ms. */
+/* At 30 fps a press registers every 33 ms, so a window of f frames at 60 fps covers either
+   floor(f/2) or ceil(f/2) frames depending on where the hit falls. Returns real time. */
 function at30(f) {
   const lo = Math.round(Math.floor(f / 2) * 1000 / 30), hi = Math.round(Math.ceil(f / 2) * 1000 / 30);
-  return lo === hi ? `always ${lo} ms` : `${lo} or ${hi} ms`;
+  return lo === hi ? `${lo} ms` : `${lo} or ${hi} ms`;
 }
 const statCell = s => `<span class="stat">${esc(human(s))}<span class="internal">${esc(s)}</span></span>`;
+const intro = text => `<p class="page-intro">${text}</p>`;
 
-/* sortable table: cols = [{label, num}], rows = [[{html, key}]] */
+/* sortable table: cols = [{label, num}], rows = [[cell]] where cell is text or {html, key} */
 function table(cols, rows, opts = {}) {
-  const id = 't' + Math.random().toString(36).slice(2, 8);
   const head = cols.map((c, i) => `<th class="${c.num ? 'num ' : ''}${opts.sortable ? 'sortable' : ''}" data-col="${i}" ${opts.sortable ? 'tabindex="0"' : ''} scope="col">${c.label}</th>`).join('');
   const cell = c => (c !== null && typeof c === 'object') ? c : { html: esc(c), key: c };
   const body = rows.map(r => `<tr>${r.map((c, i) => { c = cell(c); return `<td class="${cols[i].num ? 'num' : ''}" data-key="${esc(c.key ?? '')}">${c.html ?? ''}</td>`; }).join('')}</tr>`).join('');
-  return `<div class="table-wrap"><table id="${id}" ${opts.sortable ? 'data-sortable="1"' : ''}>${opts.caption ? `<caption class="sr">${esc(opts.caption)}</caption>` : ''}<thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+  return `<div class="table-wrap"><table ${opts.sortable ? 'data-sortable="1"' : ''}>${opts.caption ? `<caption class="sr">${esc(opts.caption)}</caption>` : ''}<thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 function bindSorting(root) {
   root.querySelectorAll('table[data-sortable] th.sortable').forEach(th => {
@@ -58,12 +58,19 @@ function bindSorting(root) {
     th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
   });
 }
-function seg(name, options, current) {
-  return `<div class="seg" role="group" aria-label="${esc(name)}">${options.map(([v, label]) =>
-    `<button type="button" data-seg="${esc(name)}" data-value="${esc(v)}" aria-pressed="${String(v) === String(current)}">${esc(label)}</button>`).join('')}</div>`;
+function seg(name, label, options, current) {
+  return `<div class="seg" role="group" aria-label="${esc(label)}">${options.map(([v, text]) =>
+    `<button type="button" data-seg="${esc(name)}" data-value="${esc(v)}" aria-pressed="${String(v) === String(current)}">${esc(text)}</button>`).join('')}</div>`;
 }
+function bindSeg(root, name, onPick) {
+  root.querySelectorAll(`[data-seg="${name}"]`).forEach(b => b.addEventListener('click', () => {
+    root.querySelectorAll(`[data-seg="${name}"]`).forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    onPick(b.dataset.value);
+  }));
+}
+const field = (label, control) => `<label class="field"><span>${esc(label)}</span>${control}</label>`;
 
-/* ---------- combat ---------- */
+/* ---------- parry and dodge ---------- */
 function band(d) { return d === 0 ? 'Easy' : d === 1 ? 'Medium' : 'HardPlus'; }
 function bonus(sourceName, stat, levelIndex) {
   const src = DATA.window_bonuses.find(b => b.name === sourceName);
@@ -90,87 +97,78 @@ function windowsNow() {
 }
 function lane(cls, name, sub, sec) {
   const f = Math.max(0, frames(sec));
-  const pct = Math.min(100, f / FPS * 100);
   return `<div class="lane"><div class="lane-name">${esc(name)}<small>${esc(sub)}</small></div>
-    <div class="lane-bar" style="--f:calc(100% / ${FPS})"><div class="fill ${cls}" data-lane="${cls}" style="width:${pct}%"><span class="fill-label">${f} frames (${ms(f / FPS)} ms)</span></div></div></div>`;
+    <div class="lane-bar"><div class="fill ${cls}" data-lane="${cls}" style="width:${Math.min(100, f / FPS * 100)}%"><span class="fill-label">${f} f, ${ms(f / FPS)} ms</span></div></div></div>`;
 }
-function rulerLanes() {
+function calcFoot() {
   const w = windowsNow();
-  return lane('parry', 'Parry', 'press block', w.parry) + lane('perfect', 'Perfect Parry', 'press block', w.perfect) + lane('dodge', 'Perfect Dodge', 'press dodge', w.dodge);
-}
-function rulerFoot() {
-  const w = windowsNow();
-  const fp = frames(w.perfect), fpar = frames(w.parry);
-  return `<span>At 30 fps the windows are just as long on average, but less consistent: Perfect Parry gives you <strong>${at30(fp)}</strong> per attack, Parry <strong>${at30(fpar)}</strong>.</span>`;
+  return `At 30 fps: Perfect Parry ${at30(frames(w.perfect))}, Parry ${at30(frames(w.parry))}, depending on the attack. The average matches 60 fps.`;
 }
 function viewCombat() {
   const c = DATA.combat, ws = c.windows;
-  const chestOpts = [['none', 'Any other chest armor'], ['bounty0', 'Bounty Master Armor'], ['bounty1', 'Bounty Master Armor, upgraded'],
-    ['undying0', 'Armor of the Undying, aligned weapon'], ['undying2', 'Armor of the Undying, upgraded, aligned weapon']];
+  const chestOpts = [['none', 'Other chest armor'], ['bounty0', 'Bounty Master Armor'], ['bounty1', 'Bounty Master Armor +1'],
+    ['undying0', 'Armor of the Undying (aligned)'], ['undying2', 'Armor of the Undying +2 (aligned)']];
   const enemyOpts = [['none', 'Most enemies'], ['Polearms', 'Polearm users'], ['Sickles', 'Sickle users'], ['Swords', 'Sword users'], ['First check (unidentified)', 'Unidentified group']];
-  const axis = [60, 45, 30, 15].map(f => `<span style="right:${f / FPS * 100}%">${f === 60 ? '60 f (1 s)' : f + ' f'}</span>`).join('') + `<span class="strike" style="right:0">Strike</span>`;
-  let html = `<section class="ruler" aria-labelledby="ruler-title">
-    <div class="ruler-head"><h2 id="ruler-title">How long you have before the strike</h2>
-    <p class="note" style="margin:0;max-width:40ch">Every defensive window closes the moment the enemy's hit lands. Frames at 60 fps.</p></div>
-    <div class="controls">
-      <div class="control"><span>Difficulty (Timing Windows)</span>${seg('diff', DIFFS.map((d, i) => [i, d]), state.diff)}</div>
-      <div class="control"><span>Chest armor</span><select id="chest" aria-label="Chest armor">${chestOpts.map(([v, l]) => `<option value="${v}" ${v === state.chest ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-      <div class="control"><span>Enemy</span><select id="enemy" aria-label="Enemy type">${enemyOpts.map(([v, l]) => `<option value="${esc(v)}" ${v === state.enemy ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-      <div class="control"><span>Charm</span><label class="check"><input type="checkbox" id="charm" ${state.charm ? 'checked' : ''}> Charm of Futsunushi</label></div>
+  const axis = [60, 45, 30, 15].map(f => `<span style="right:${f / FPS * 100}%">${f} f</span>`).join('') + `<span class="strike" style="right:0">hit</span>`;
+  const w = windowsNow();
+  let html = `<h1>Parry and dodge</h1>` + intro('How long before an enemy\'s hit you can press block or dodge. Every window ends when the hit lands. Frames are at 60 fps.');
+  html += `<div class="calc">
+    <div class="toolbar">
+      ${field('Difficulty', seg('diff', 'Difficulty', DIFFS.map((d, i) => [i, d]), state.diff))}
+      ${field('Chest armor', `<select id="chest">${chestOpts.map(([v, l]) => `<option value="${v}" ${v === state.chest ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
+      ${field('Enemy', `<select id="enemy">${enemyOpts.map(([v, l]) => `<option value="${esc(v)}" ${v === state.enemy ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
+      <label class="check"><input type="checkbox" id="charm" ${state.charm ? 'checked' : ''}> Charm of Futsunushi</label>
     </div>
-    <div class="track" id="lanes">${rulerLanes()}</div>
+    ${lane('parry', 'Parry', 'block', w.parry)}${lane('perfect', 'Perfect Parry', 'block', w.perfect)}${lane('dodge', 'Perfect Dodge', 'dodge', w.dodge)}
     <div class="axis" aria-hidden="true"><span></span><div class="axis-scale">${axis}</div></div>
-    <div class="ruler-foot" id="ruler-foot">${rulerFoot()}</div>
-  </section>`;
+    <p class="calc-foot" id="calc-foot">${calcFoot()}</p>
+  </div>`;
 
-  html += `<h2>Base windows by difficulty</h2>
-  <p>The Custom difficulty's Timing Windows setting picks one of these rows directly. Story has no row of its own and most likely uses Easy. Hard and Lethal share the same Perfect Parry and Perfect Dodge; Lethal only shortens the regular Parry.</p>`;
-  html += table([{ label: 'Difficulty' }, { label: 'Parry', num: 1 }, { label: 'Perfect Parry', num: 1 }, { label: 'Perfect Dodge', num: 1 }, { label: 'Unidentified window', num: 1 }],
+  html += `<h2>Base windows</h2><p>The Timing Windows setting picks a row. Story mode has no row of its own and most likely uses Easy. Hard and Lethal have the same Perfect Parry and Perfect Dodge windows.</p>`;
+  html += table([{ label: 'Difficulty' }, { label: 'Parry', num: 1 }, { label: 'Perfect Parry', num: 1 }, { label: 'Perfect Dodge', num: 1 }, { label: 'Unknown', num: 1 }],
     ws.map(w => [w.difficulty, ...[w.parry, w.perfect_parry, w.perfect_dodge, w.unknown].map(s => ({ html: `${frames(s)} f <span class="sub">${ms(s)} ms</span>`, key: s }))]));
-  html += `<p class="note">The unidentified window is a fifth value in the same table that no stat changes.</p>`;
+  html += `<p class="small muted">The last column is a fifth value in the same table. No stat changes it and its use is unknown.</p>`;
 
-  html += `<h2>Gear that widens the windows</h2><p>These bonuses are added to the base windows. Hard and Lethal share one value. Charm of Futsunushi is the only charm that touches the windows; the two armors are both chest pieces.</p>`;
+  html += `<h2>Gear bonuses</h2><p>These add to the base windows. Hard and Lethal share one value. Charm of Futsunushi is the only charm with a window bonus.</p>`;
   const bonusRows = [];
-  for (const src of DATA.window_bonuses) {
-    for (const s of src.stats) {
-      bonusRows.push([{ html: `<b>${esc(src.name)}</b>` }, { html: statCell(s.stat) },
-        { html: src.levels.map((l, i) => s.values[i] === null || s.values[i] === undefined ? '' : `${esc(l)} ${fmtVal('window', s.values[i])}`).filter(Boolean).join('<br>') }]);
-    }
+  for (const src of DATA.window_bonuses) for (const s of src.stats) {
+    bonusRows.push([src.name, { html: statCell(s.stat) },
+      { html: src.levels.map((l, i) => s.values[i] === null || s.values[i] === undefined ? '' : `${esc(l)}: ${fmtVal('window', s.values[i])}`).filter(Boolean).join('<br>') }]);
   }
-  html += table([{ label: 'Source' }, { label: 'Stat' }, { label: 'Value by upgrade level' }], bonusRows);
+  html += table([{ label: 'Source' }, { label: 'Stat' }, { label: 'By upgrade level' }], bonusRows);
 
-  html += `<h2>Per-enemy adjustments</h2><p>Some enemy classes change the Parry and Perfect Parry windows. The game checks the groups in table order and applies only the first match.</p>`;
+  html += `<h2>Enemy adjustments</h2><p>Some enemy types widen or shorten the Parry and Perfect Parry windows. Only the first matching row applies.</p>`;
   const groups = Object.keys(ws[0].enemy_adjust);
-  html += table([{ label: 'Enemies' }, ...DIFFS.map(d => ({ label: `${d}: Parry / Perfect`, num: 1 }))],
+  html += table([{ label: 'Enemies' }, ...DIFFS.map(d => ({ label: `${d} (Parry / Perfect)`, num: 1 }))],
     groups.map(g => [g, ...ws.map(w => ({ html: w.enemy_adjust[g].map(v => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(frames(v))} f`).join(' / ') }))]));
 
-  html += `<h3>Why a window can feel shorter than the table</h3>
-  <p>A window can never open earlier than about 1/6 s after a point early in the attacker's animation, so fast attacks get less than the table gives; this hits the long Easy Parry window hardest. There is also a small low-health extension (+0.05 s Parry, +0.01 s Perfect Parry, times a scale) whose trigger is not identified.</p>
-  <h3>30 fps versus 60 fps</h3>
-  <p>The windows are defined in seconds and the game does not adjust them for frame rate. Your press is timed by the frame that handles it, so it can only register every 16.7 ms at 60 fps and every 33.3 ms at 30 fps.</p>
-  <p>That does not halve the window at 30 fps: frames last twice as long, so the window covers half as many of them. What changes is consistency. At 60 fps every window is a whole number of frames, so it is the same length on every attack. At 30 fps most windows fall between frame counts, so you get a little less on some attacks and a little more on others, depending on where the strike lands between two frames. The 50 ms Perfect Parry on Hard and Lethal becomes 33 ms on half of attacks and 67 ms on the other half, still 50 ms on average. At 40 fps (25 ms frames) it is always 50 ms again.</p>`;
+  html += `<h2>Shorter windows on fast attacks</h2>
+  <p>A window can't start earlier than about 1/6 s into the enemy's attack animation. Fast attacks can get less than the table shows, mostly the long Parry window on Easy. There is also a small bonus at low health (+0.05 s Parry, +0.01 s Perfect Parry, scaled) with an unknown trigger.</p>
+  <h2>Frame rate</h2>
+  <p>The windows are set in seconds and don't change with frame rate. A press only registers once per frame, every 16.7 ms at 60 fps or 33.3 ms at 30 fps.</p>
+  <p>At 30 fps the windows are the same length on average, but they vary from attack to attack. On Hard and Lethal the 50 ms Perfect Parry window is 33 ms on some attacks and 67 ms on others. At 40 fps it is always 50 ms.</p>`;
 
-  html += `<h2>Weapon alignment</h2><p>Each weapon counters one enemy class. Being aligned means you have the counter weapon out at that moment.</p>`;
-  html += table([{ label: 'Weapon' }, { label: 'Aligned against' }], c.alignment.map(a => [a.weapon, a.against]));
-  html += `<p class="note">Shield-bearers count only as Shields, even if they also carry a sword or sickle. Brute types always count as Brutes for the Odachi. While an enemy has one particular, unidentified status effect, every weapon counts as aligned against it.</p>`;
+  html += `<h2>Weapon alignment</h2><p>Each weapon counters one type of enemy. You are aligned when you have the counter weapon out.</p>`;
+  html += table([{ label: 'Weapon' }, { label: 'Counters' }], c.alignment.map(a => [a.weapon, a.against]));
+  html += `<p class="small muted">Shield users only count as Shields, even if they also carry a sword or sickle. Brutes always count as Brutes for the Odachi. One unidentified status effect makes every weapon count as aligned.</p>`;
 
   const det = c.detection, ag = c.aggression;
-  html += `<h2>Difficulty settings</h2><h3>Detection</h3>`;
+  html += `<h2>Detection</h2>`;
   html += table([{ label: '' }, ...DIFFS.map(d => ({ label: d, num: 1 }))], [
-    ['Range at which enemies notice your noise', ...det.noise_range.map(v => ({ html: `×${num(v)}`, key: v }))],
-    ['Time an enemy needs to spot you', ...det.detect_time.map(v => ({ html: `×${num(v)}`, key: v }))],
+    ['Range at which enemies hear you', ...det.noise_range.map(v => ({ html: `×${num(v)}`, key: v }))],
+    ['Time for an enemy to spot you', ...det.detect_time.map(v => ({ html: `×${num(v)}`, key: v }))],
   ]);
-  html += `<p class="note">The spotting time is also multiplied by (1 + Awareness Mod), the stealth stat on armor and charms, and the base time is at least 2 s.</p>`;
-  html += `<h3>Enemy aggression</h3><p>The numbers are exact; what each row controls is our best reading of how the game uses it.</p>`;
-  html += table([{ label: 'Likely meaning' }, ...DIFFS.map(d => ({ label: d, num: 1 }))], [
-    ['Wait between attacks, 2 enemies (s)', ...ag.attack_wait.map(a => `${num(a.two[0])}–${num(a.two[1])}`)],
-    ['Wait between attacks, 5 enemies (s)', ...ag.attack_wait.map(a => `${num(a.five[0])}–${num(a.five[1])}`)],
-    ['Attackers allowed at once, 2 / 3 / 5 enemies', ...ag.group_budget.map(b => b.join(' / '))],
-    ...ag.windup.distances_m.map((m, k) => [`Wind-up time at ${num(m)} m (s)`, ...ag.windup.rows.map(r => num(r[k]))]),
-    ...ag.reaction_delay.map((r, k) => [`Reaction delay, event kind ${k} (s)`, ...r.map(num)]),
-    ['Minimum gap before repeating an action (s)', ...ag.repeat_gap.map(num)],
+  html += `<p class="small muted">Spotting time is also multiplied by 1 + Awareness Mod, the stealth stat on some armor and charms. The base time is at least 2 seconds.</p>`;
+  html += `<h2>Enemy aggression</h2><p>The numbers are exact. The labels are our best guess at what each row controls.</p>`;
+  html += table([{ label: 'Setting' }, ...DIFFS.map(d => ({ label: d, num: 1 }))], [
+    ['Wait between attacks, 2 enemies (s)', ...ag.attack_wait.map(a => `${num(a.two[0])} to ${num(a.two[1])}`)],
+    ['Wait between attacks, 5 enemies (s)', ...ag.attack_wait.map(a => `${num(a.five[0])} to ${num(a.five[1])}`)],
+    ['Attackers at once, with 2, 3 and 5 enemies', ...ag.group_budget.map(b => b.join(', '))],
+    ...ag.windup.distances_m.map((m, k) => [`Wind-up at ${num(m)} m (s)`, ...ag.windup.rows.map(r => num(r[k]))]),
+    ...ag.reaction_delay.map((r, k) => [`Reaction delay, type ${k + 1} (s)`, ...r.map(num)]),
+    ['Minimum time between repeated actions (s)', ...ag.repeat_gap.map(num)],
   ]);
-  html += `<p class="note">Enemy damage, resolve gains and animation speed per difficulty are not hard-coded. Damage per difficulty is on the Damage page.</p>`;
+  html += `<p class="small muted">Enemy damage per difficulty is on the <a href="#damage">Damage</a> page.</p>`;
   return html;
 }
 function bindCombat(root) {
@@ -179,39 +177,41 @@ function bindCombat(root) {
     for (const [cls, sec] of [['parry', w.parry], ['perfect', w.perfect], ['dodge', w.dodge]]) {
       const f = Math.max(0, frames(sec)), fill = root.querySelector(`.fill[data-lane="${cls}"]`);
       fill.style.width = Math.min(100, f / FPS * 100) + '%';
-      fill.querySelector('.fill-label').textContent = `${f} frames (${ms(f / FPS)} ms)`;
+      fill.querySelector('.fill-label').textContent = `${f} f, ${ms(f / FPS)} ms`;
     }
-    root.querySelector('#ruler-foot').innerHTML = rulerFoot();
+    root.querySelector('#calc-foot').textContent = calcFoot();
   };
-  root.querySelectorAll('[data-seg="diff"]').forEach(b => b.addEventListener('click', () => {
-    state.diff = +b.dataset.value;
-    root.querySelectorAll('[data-seg="diff"]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-    refresh();
-  }));
+  bindSeg(root, 'diff', v => { state.diff = +v; refresh(); });
   root.querySelector('#chest').addEventListener('change', e => { state.chest = e.target.value; refresh(); });
   root.querySelector('#enemy').addEventListener('change', e => { state.enemy = e.target.value; refresh(); });
   root.querySelector('#charm').addEventListener('change', e => { state.charm = e.target.checked; refresh(); });
 }
 
 /* ---------- armor, weapons ---------- */
+function extraText(b) {
+  if (b.kind === 'perk') return `perk ${b.text}`;
+  if (b.kind === 'unlock') return `unlocks ${b.text}`;
+  if (b.kind === 'item') return `gives ${b.text}`;
+  return `carry ${b.text}`;
+}
 function familyDetail(f) {
-  let html = `<h3>${esc(f.name)}</h3><p class="muted" style="margin-top:0">${f.internal ? `<code>${esc(f.internal)}</code>` : 'Applies to the player, no gear object'}</p>`;
-  if (f.description) html += `<blockquote>${esc(f.description)}</blockquote>`;
+  let html = `<h2>${esc(f.name)}</h2>`;
+  if (f.description) html += `<p class="flavor">${esc(f.description)}</p>`;
   if (f.stats.length) {
     html += table([{ label: 'Stat' }, ...f.levels.map(l => ({ label: esc(l), num: 1 }))],
       f.stats.map(s => [{ html: statCell(s.stat) + (s.hero ? ' <span class="tag">player</span>' : '') }, ...s.values.map(v => ({ html: fmtVal(s.fmt, v) }))]));
-    html += `<p class="note">Running totals: each column includes every earlier upgrade.${f.levels.includes('NG+') ? ' NG+ is the New Game+ upgrade on top of the last level.' : ''}</p>`;
   }
-  const items = f.extras.map((bits, i) => bits.length ? `<li><b>${esc(f.levels[i])}</b> ${bits.map(b => `<span class="tag ${b.kind === 'unlock' ? '' : 'lily'}">${esc(b.kind === 'perk' ? 'Perk ' + b.text : b.kind === 'unlock' ? 'Unlocks ' + b.text : b.kind === 'item' ? 'Gives ' + b.text : 'Carry ' + b.text)}</span>`).join(' ')}</li>` : '').join('');
-  if (items) html += `<ul class="extras">${items}</ul>`;
+  const items = f.extras.map((bits, i) => bits.length ? `<li>${esc(f.levels[i])}: ${bits.map(b => esc(extraText(b))).join(', ')}</li>` : '').join('');
+  if (items) html += `<ul class="levels-extra">${items}</ul>`;
+  if (f.internal) html += `<p class="small muted">Internal name <code>${esc(f.internal)}</code></p>`;
   return html;
 }
-function splitView(groups, current, key) {
+function splitView(groups, current, key, label) {
   const all = groups.flatMap(g => g.items);
   const cur = all.find(f => f.key === current) || all[0];
   const picker = groups.map(g => `${g.title ? `<h4>${esc(g.title)}</h4>` : ''}${g.items.map(f => `<button type="button" data-pick="${esc(key)}" data-value="${esc(f.key)}" aria-current="${f.key === cur.key}">${esc(f.name)}</button>`).join('')}`).join('');
-  const select = `<select class="picker-select" data-pick-select="${esc(key)}" aria-label="Choose">${groups.map(g => `<optgroup label="${esc(g.title || 'All')}">${g.items.map(f => `<option value="${esc(f.key)}" ${f.key === cur.key ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</optgroup>`).join('')}</select>`;
-  return { cur, html: `<div class="split"><nav class="picker" aria-label="List">${picker}</nav><div class="detail">${select}<div id="detail-${esc(key)}"></div></div></div>` };
+  const select = `<select class="picker-select" data-pick-select="${esc(key)}" aria-label="${esc(label)}">${groups.map(g => `<optgroup label="${esc(g.title || label)}">${g.items.map(f => `<option value="${esc(f.key)}" ${f.key === cur.key ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</optgroup>`).join('')}</select>`;
+  return { cur, html: `<div class="split"><nav class="picker" aria-label="${esc(label)}">${picker}</nav><div class="detail">${select}<div id="detail-${esc(key)}"></div></div></div>` };
 }
 function bindSplit(root, key, render) {
   const show = v => {
@@ -225,16 +225,16 @@ function bindSplit(root, key, render) {
   return show;
 }
 function viewArmor() {
-  const { cur, html } = splitView([{ title: '', items: DATA.armor }], state.armor, 'armor');
+  const { cur, html } = splitView([{ title: '', items: DATA.armor }], state.armor, 'armor', 'Armor');
   state.armor = cur.key;
-  return `<h2>Armor</h2><p>Every chest armor's real numbers at each upgrade level, including the New Game+ upgrade most of them have. Hats, masks and headbands are cosmetic, with one exception: Kanemori's Two-Faced Mask. The cosmetics an upgrade unlocks are listed under each armor.</p>` + html;
+  return `<h1>Armor</h1>` + intro('Stats for each chest armor at every upgrade level. Each column includes the upgrades before it. Headgear is cosmetic, except Kanemori\'s Two-Faced Mask.') + html;
 }
 function viewWeapons() {
   const kinds = ['Melee weapons', 'Ranged weapons', 'Tools and other gear'];
   const groups = kinds.map(k => ({ title: k, items: DATA.weapons.filter(w => w.kind === k) })).filter(g => g.items.length);
-  const { cur, html } = splitView(groups, state.weapon, 'weapon');
+  const { cur, html } = splitView(groups, state.weapon, 'weapon', 'Weapons and tools');
   state.weapon = cur.key;
-  return `<h2>Weapons and tools</h2><p>The Base column is the item's own value; each upgrade adds to it. The katana and dual katana have no base damage stat: their damage is set per move, and upgrades add a flat amount on top. Bow upgrades also hand you a stack of a new ammo type, which is how those arrows are unlocked.</p>` + html;
+  return `<h1>Weapons and tools</h1>` + intro('Stats at every upgrade level. Base is the item\'s own value. The katana and dual katana have no base damage stat: their damage comes from each move, and upgrades add a flat amount to it. Bow upgrades also unlock new arrow types.') + html;
 }
 
 /* ---------- charms ---------- */
@@ -247,22 +247,22 @@ function charmRows() {
 function charmTable() {
   const rows = charmRows();
   const body = rows.map(c => {
-    const eff = c.stats.map(s => `<div><span class="stat">${esc(human(s.stat))}</span> ${s.values.map(v => fmtVal(s.fmt, v)).join(' → ')}</div>`).join('')
-      + c.perks.map(p => `<span class="tag lily">Perk ${esc(p)}</span>`).join(' ')
-      + c.upgrade_perks.map(p => `<span class="tag lily">Upgrade adds ${esc(p)}</span>`).join(' ')
-      + c.carry.map(x => `<span class="tag">Carry ${esc(x)}</span>`).join(' ');
-    return [{ html: `<b>${esc(c.name)}</b><span class="sub">${esc(c.category)}${c.major ? ', major' : ', minor'}${c.obtainable ? '' : ', not awarded by any task'}</span>`, key: c.name },
-      { html: eff || '—' }, { html: `<span class="muted">${esc(c.description)}</span>` }];
+    const eff = c.stats.map(s => `<div>${esc(human(s.stat))} ${s.values.map(v => fmtVal(s.fmt, v)).join(', ')}</div>`).join('')
+      + c.perks.map(p => `<span class="tag">perk ${esc(p)}</span>`).join(' ')
+      + c.upgrade_perks.map(p => `<span class="tag">upgrade: ${esc(p)}</span>`).join(' ')
+      + c.carry.map(x => `<span class="tag">carry ${esc(x)}</span>`).join(' ');
+    return [{ html: `${esc(c.name)}<span class="sub">${esc(c.category)}, ${c.major ? 'major' : 'minor'}${c.obtainable ? '' : ', unused'}</span>`, key: c.name },
+      { html: eff || '-' }, { html: `<span class="muted">${esc(c.description)}</span>` }];
   });
-  return `<p class="count">${rows.length} of ${DATA.charms.length} charms</p>` + table([{ label: 'Charm' }, { label: 'Effect at each level' }, { label: 'In-game text' }], body, { sortable: true });
+  return `<p class="count">${rows.length} of ${DATA.charms.length}</p>` + table([{ label: 'Charm' }, { label: 'Effect by level' }, { label: 'In-game text' }], body, { sortable: true });
 }
 function viewCharms() {
   const cats = ['All', ...new Set(DATA.charms.map(c => c.category))];
-  return `<h2>Charms</h2><p>All 91 charms with the value of every effect at each upgrade level, from base to fully upgraded. Where the game says "a minor amount", this is the number it uses. Every stat starts at zero, so a charm's number is the whole effect unless something else adds to the same stat: +10% Lethal Damage Survival Chance means a 10% chance.</p>
+  return `<h1>Charms</h1>` + intro('All 91 charms with exact values at every upgrade level, listed from base to fully upgraded. Charms marked unused are in the files but no task awards them.') + `
   <div class="toolbar">
     <div class="chips" role="group" aria-label="Category">${cats.map(c => `<button type="button" data-cat="${esc(c)}" aria-pressed="${c === state.charmCat}">${esc(c)}</button>`).join('')}</div>
-    ${seg('size', [['all', 'All'], ['major', 'Major'], ['minor', 'Minor']], state.charmSize)}
-    <input type="search" id="charm-q" placeholder="Search charms, stats or perks" aria-label="Search charms" value="${esc(state.charmQuery)}">
+    ${seg('size', 'Charm size', [['all', 'All'], ['major', 'Major'], ['minor', 'Minor']], state.charmSize)}
+    <input type="search" id="charm-q" placeholder="Search" aria-label="Search charms" value="${esc(state.charmQuery)}">
   </div><div id="charm-table">${charmTable()}</div>`;
 }
 function bindCharms(root) {
@@ -270,9 +270,7 @@ function bindCharms(root) {
   root.querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => {
     state.charmCat = b.dataset.cat; root.querySelectorAll('[data-cat]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); redraw();
   }));
-  root.querySelectorAll('[data-seg="size"]').forEach(b => b.addEventListener('click', () => {
-    state.charmSize = b.dataset.value; root.querySelectorAll('[data-seg="size"]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); redraw();
-  }));
+  bindSeg(root, 'size', v => { state.charmSize = v; redraw(); });
   root.querySelector('#charm-q').addEventListener('input', e => { state.charmQuery = e.target.value; redraw(); });
 }
 
@@ -280,92 +278,82 @@ function bindCharms(root) {
 function viewSkills() {
   const p = DATA.progression;
   const base = DATA.enemies.player[1]?.base?.hp ?? 100;
-  let html = `<h2>Skills</h2><p>Skill tree entries, listed by the game's internal names because their in-game titles aren't linked to them. Entries that only unlock a move without a number are left out.</p>`;
-  html += table([{ label: 'Skill' }, { label: 'Perks' }, { label: 'Numbers' }], DATA.skills.map(s => [
+  let html = `<h1>Skills and progression</h1>` + intro('Skill tree entries that change a number or add a perk, then health, Spirit and carry upgrades. Skill names are the game\'s internal ones.');
+  html += `<h2>Skills</h2>` + table([{ label: 'Skill' }, { label: 'Perks' }, { label: 'Values' }], DATA.skills.map(s => [
     { html: esc(human(s.task)), key: s.task },
-    { html: s.perks.map(x => `<span class="tag lily">${esc(x)}</span>`).join(' ') || '—' },
-    { html: s.stats.map(x => `${esc(human(x.stat))} ${fmtVal(x.fmt, x.value)}${x.target !== 'hero' ? ` <span class="muted">on ${esc(x.target)}</span>` : ''}`).join('<br>') || '—' }]), { sortable: true });
+    { html: s.perks.map(x => `<span class="tag">${esc(x)}</span>`).join(' ') || '-' },
+    { html: s.stats.map(x => `${esc(human(x.stat))} ${fmtVal(x.fmt, x.value)}${x.target !== 'hero' ? ` <span class="muted">(${esc(x.target)})</span>` : ''}`).join('<br>') || '-' }]), { sortable: true });
 
-  html += `<h2>Health</h2><p>The player starts with ${num(base)} health and ${num(DATA.enemies.player[1]?.base?.blkp ?? 100)} block points on every difficulty. Each of the ${p.health.length} health upgrades adds less than the one before.</p>`;
+  html += `<h2>Health upgrades</h2><p>You start with ${num(base)} health and ${num(DATA.enemies.player[1]?.base?.blkp ?? 100)} block points on every difficulty. Later upgrades add less.</p>`;
   let tot = base;
-  html += table([{ label: 'Upgrade', num: 1 }, { label: 'Adds', num: 1 }, { label: 'Max health after', num: 1 }], p.health.map((v, i) => { tot += v; return [String(i + 1), `+${num(v)}`, num(tot)]; }));
-  html += `<p class="note">Armor can add more, such as Taro's Armor (+5 to +20).</p>`;
+  html += table([{ label: 'Upgrade', num: 1 }, { label: 'Adds', num: 1 }, { label: 'Max health', num: 1 }], p.health.map((v, i) => { tot += v; return [String(i + 1), `+${num(v)}`, num(tot)]; }));
   html += `<h2>Spirit</h2>` + table([{ label: 'Task' }, { label: 'Change' }], p.spirit.map(s => [s.task, `${human(s.stat)} +${num(s.value)}`]));
-  html += `<h2>Carry capacity</h2><p>Each upgrade raises how many of an item you can carry. Starting limits are not included.</p>`;
-  html += table([{ label: 'Item' }, { label: 'Upgrade 1', num: 1 }, { label: 'Upgrade 2', num: 1 }, { label: 'Upgrade 3', num: 1 }, { label: 'Total', num: 1 }],
-    p.carry.map(c => [human(c.item), ...c.steps.map(v => v ? `+${v}` : '—'), `+${c.steps.reduce((a, b) => a + b, 0)}`]), { sortable: true });
-  html += `<h2>Perks unlocked by the story</h2>` + table([{ label: 'Task' }, { label: 'Perks' }], p.story_perks.map(s => [s.task, { html: s.perks.map(x => `<span class="tag lily">${esc(x)}</span>`).join(' ') }]), { sortable: true });
+  html += `<h2>Carry capacity</h2><p>How much each upgrade raises the limit. Starting limits aren't known.</p>`;
+  html += table([{ label: 'Item' }, { label: '1st', num: 1 }, { label: '2nd', num: 1 }, { label: '3rd', num: 1 }, { label: 'Total', num: 1 }],
+    p.carry.map(c => [human(c.item), ...c.steps.map(v => v ? `+${v}` : '-'), `+${c.steps.reduce((a, b) => a + b, 0)}`]), { sortable: true });
+  html += `<h2>Story perks</h2>` + table([{ label: 'Task' }, { label: 'Perks' }], p.story_perks.map(s => [s.task, { html: s.perks.map(x => `<span class="tag">${esc(x)}</span>`).join(' ') }]), { sortable: true });
   return html;
 }
 
 /* ---------- enemies ---------- */
-const pair = p => p ? `<b>${num(p.hp)}</b> <span class="muted">/ ${num(p.blkp)}</span>` : '<span class="muted">—</span>';
+const pair = p => p ? `${num(p.hp)} <span class="muted">/ ${num(p.blkp)}</span>` : '<span class="muted">-</span>';
 function enemyMatrix(arch) {
   const rows = DATA.enemies.enemies.filter(p => p.archk === arch);
   const regions = ['NonValley', 'Frontier', 'Castle', 'Ninja', 'Gun', 'Finale'].filter(r => rows.some(p => p.evagrp === r));
   const ranks = ['Grunt', 'Veteran', 'Elite', 'Leader'].filter(k => rows.some(p => p.wpnlvl === k));
   const v = state.enemyView;
-  let html = `<h3>${esc(human(arch))}</h3>`;
-  html += table([{ label: 'Region group' }, ...ranks.map(r => ({ label: r, num: 1 }))], regions.map(g => [g, ...ranks.map(r => {
+  return `<h2>${esc(human(arch))}</h2>` + table([{ label: 'Region' }, ...ranks.map(r => ({ label: r, num: 1 }))], regions.map(g => [g, ...ranks.map(r => {
     const p = rows.find(x => x.evagrp === g && x.wpnlvl === r);
-    return { html: p ? pair(p[v]) : '<span class="muted">—</span>' };
+    return { html: p ? pair(p[v]) : '<span class="muted">-</span>' };
   })]));
-  return html;
 }
 function viewEnemies() {
   const E = DATA.enemies;
   const archs = [...new Set(E.enemies.map(p => p.archk))].sort();
   state.arch = state.arch && archs.includes(state.arch) ? state.arch : 'Skirmisher';
-  let html = `<h2>Enemies</h2><p>Health and block points for every enemy type, by the game's internal region group and rank. Block points are the guard meter you break to stagger an enemy. Shown as <b>health</b> / block.</p>
-  <div class="toolbar">${seg('ev', [['base', 'Base game'], ['ng_plus', 'New Game+'], ['alt', 'Alternate set']], state.enemyView)}</div>
-  <p class="note">Region groups are internal names (NonValley, Frontier, Castle, Ninja, Gun, Finale) that line up with the game's valley names; exactly which in-game areas each covers is not confirmed. The alternate set is a third pair of values whose purpose is unknown; a dash means it is not set.</p>`;
-  const groups = [{ title: '', items: archs.map(a => ({ key: a, name: human(a) })) }];
-  const { html: split } = splitView(groups, state.arch, 'arch');
-  html += split;
-  html += `<h2>Creatures and civilians</h2>` + table([{ label: 'Archetype' }, { label: 'Health / block', num: 1 }, { label: 'New Game+', num: 1 }],
+  let html = `<h1>Enemies</h1>` + intro('Health and block points by enemy type, region and rank, shown as health / block. Block points are the guard meter you break to stagger an enemy.');
+  html += `<div class="toolbar">${seg('ev', 'Values', [['base', 'Base game'], ['ng_plus', 'New Game+'], ['alt', 'Alternate']], state.enemyView)}</div>
+  <p class="small muted">Regions are the game's internal enemy groups. Which areas each one covers isn't confirmed. Alternate is a third set of values with an unknown use.</p>`;
+  html += splitView([{ title: '', items: archs.map(a => ({ key: a, name: human(a) })) }], state.arch, 'arch', 'Enemy type').html;
+  html += `<h2>Animals and civilians</h2>` + table([{ label: 'Type' }, { label: 'Health / block', num: 1 }, { label: 'New Game+', num: 1 }],
     E.archetypes.map(p => [human(p.archk), { html: pair(p.base), key: p.base?.hp }, { html: pair(p.ng_plus), key: p.ng_plus?.hp }]), { sortable: true });
-  html += `<h2>The player and allies</h2>` + table([{ label: 'Who' }, { label: 'Health / block', num: 1 }, { label: 'New Game+', num: 1 }, { label: 'Damage ratio', num: 1 }], [
-    ...E.player.map(p => [`Player, ${p.gdk === 'Nightmare' ? 'Lethal' : p.gdk}`, { html: pair(p.base) }, { html: pair(p.ng_plus && p.ng_plus.hp > 0 ? p.ng_plus : null) }, '—']),
-    ...E.buddies.map(p => [`Ally profile ${human(p.buddylk)}`, { html: pair(p.base) }, { html: pair(p.ng_plus) }, num((E.buddy_adjustments[p.buddylk] || [])[0])]),
+  html += `<h2>Player and allies</h2>` + table([{ label: '' }, { label: 'Health / block', num: 1 }, { label: 'New Game+', num: 1 }, { label: 'Damage ratio', num: 1 }], [
+    ...E.player.map(p => [`Player, ${p.gdk === 'Nightmare' ? 'Lethal' : p.gdk}`, { html: pair(p.base) }, { html: pair(p.ng_plus && p.ng_plus.hp > 0 ? p.ng_plus : null) }, '-']),
+    ...E.buddies.map(p => [`Ally (${human(p.buddylk)})`, { html: pair(p.base) }, { html: pair(p.ng_plus) }, num((E.buddy_adjustments[p.buddylk] || [])[0])]),
   ]);
   return html;
 }
 function bindEnemies(root) {
   const show = bindSplit(root, 'arch', a => enemyMatrix(a));
   show(state.arch);
-  root.querySelectorAll('[data-seg="ev"]').forEach(b => b.addEventListener('click', () => {
-    state.enemyView = b.dataset.value; root.querySelectorAll('[data-seg="ev"]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); show(state.arch);
-  }));
+  bindSeg(root, 'ev', v => { state.enemyView = v; show(state.arch); });
 }
 
 /* ---------- duels and bounties ---------- */
 function opponentTable(items, key, adj) {
-  return table([{ label: 'Opponent' }, { label: 'Health', num: 1 }, { label: 'Block', num: 1 }, { label: 'Alternate', num: 1 }, { label: 'NG+ health / block', num: 1 }, { label: 'Damage ratio', num: 1 }, { label: 'NG+ damage ratio', num: 1 }],
+  return table([{ label: 'Opponent' }, { label: 'Health', num: 1 }, { label: 'Block', num: 1 }, { label: 'Alternate', num: 1 }, { label: 'New Game+', num: 1 }, { label: 'Damage', num: 1 }, { label: 'NG+ damage', num: 1 }],
     items.map(p => {
       const a = adj[p[key]] || [];
       return [{ html: esc(human(p[key])), key: p[key] }, { html: num(p.base?.hp), key: p.base?.hp }, { html: num(p.base?.blkp), key: p.base?.blkp },
-        { html: pair(p.alt), key: p.alt?.hp ?? -1 }, { html: pair(p.ng_plus), key: p.ng_plus?.hp ?? -1 }, { html: a[0] !== undefined ? `×${num(a[0])}` : '—', key: a[0] ?? 0 }, { html: a[1] !== undefined ? `×${num(a[1])}` : '—', key: a[1] ?? 0 }];
+        { html: pair(p.alt), key: p.alt?.hp ?? -1 }, { html: pair(p.ng_plus), key: p.ng_plus?.hp ?? -1 }, { html: a[0] !== undefined ? `×${num(a[0])}` : '-', key: a[0] ?? 0 }, { html: a[1] !== undefined ? `×${num(a[1])}` : '-', key: a[1] ?? 0 }];
     }), { sortable: true });
 }
 function viewDuels() {
   const E = DATA.enemies;
-  return `<h2>Duels</h2><p>All ${E.duels.length} duel opponents by their internal names. The prefix is the area (Fr, Cv, Nv, Gv, Fn); phases are separate entries. The damage ratio scales how hard the opponent hits.</p>${opponentTable(E.duels, 'dueldk', E.duel_adjustments)}
-  <h2>Bounty targets</h2><p>${E.bounties.length} bounty targets, same columns.</p>${opponentTable(E.bounties, 'bhtdk', E.bounty_adjustments)}
-  <p class="note">Two phases of the final duel have 9,999 health (99,999 in New Game+), probably so that a scripted event ends them rather than damage.</p>`;
+  return `<h1>Duels and bounties</h1>` + intro('Health, block points and damage multiplier for every duel opponent and bounty target. Names are internal. The prefix is the region: Fr, Cv, Nv, Gv or Fn.') +
+    `<h2>Duels</h2>${opponentTable(E.duels, 'dueldk', E.duel_adjustments)}
+    <p class="small muted">Two phases of the final duel have 9,999 health, probably so that a scripted event ends them.</p>
+    <h2>Bounty targets</h2>${opponentTable(E.bounties, 'bhtdk', E.bounty_adjustments)}`;
 }
 
 /* ---------- damage ---------- */
 function median(a) { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; }
 function dmgTable() {
   const d = state.dmgDiff;
-  const rows = DATA.enemies.damage_classes.filter(c => {
-    if (!state.dmgHideSpecial) return true;
-    const hp = c.hit_points || [0];
-    return hp.some(v => v > 0 && v < MAX_F32);
-  });
+  const rows = DATA.enemies.damage_classes.filter(c => !state.dmgHideSpecial || (c.hit_points || [0]).some(v => v > 0 && v < MAX_F32));
   const v4 = (arr, i) => !arr ? null : arr.length === 4 ? arr[i] : arr[0];
-  const show = v => v === null ? '—' : v >= MAX_F32 ? '∞' : num(v);
-  return `<p class="count">${rows.length} damage classes</p>` + table([{ label: 'Class' }, ...DIFFS.map((x, i) => ({ label: `${x}${i === d ? ' (selected)' : ''}`, num: 1 })), { label: 'NG+ on ' + DIFFS[d], num: 1 }, { label: 'Block damage', num: 1 }, { label: 'Legends', num: 1 }],
+  const show = v => v === null ? '-' : v >= MAX_F32 ? '∞' : num(v);
+  return `<p class="count">${rows.length} classes</p>` + table([{ label: 'ID' }, ...DIFFS.map(x => ({ label: x, num: 1 })), { label: `NG+ (${DIFFS[d]})`, num: 1 }, { label: 'Block damage', num: 1 }, { label: 'Legends', num: 1 }],
     rows.map(c => [{ html: `<code>${esc(c.damage_class.slice(2))}</code>`, key: c.damage_class },
       ...DIFFS.map((_, i) => ({ html: i === d ? `<b>${show(v4(c.hit_points, i))}</b>` : show(v4(c.hit_points, i)), key: v4(c.hit_points, i) ?? -1 })),
       { html: show(v4(c.hit_points_ng_plus, d)), key: v4(c.hit_points_ng_plus, d) ?? -1 },
@@ -374,44 +362,35 @@ function dmgTable() {
 }
 function viewDamage() {
   const dc = DATA.enemies.damage_classes.filter(c => c.hit_points && c.hit_points.length === 4 && c.hit_points[1] > 0 && c.hit_points[1] < MAX_F32);
-  const ratio = i => median(dc.map(c => c.hit_points[i] / c.hit_points[1]));
-  return `<h2>Damage</h2><p>Enemy hits come from ${DATA.enemies.damage_classes.length} damage classes. Most give one value per Enemy Damage difficulty setting; the player has 100 health, so a value of 50 is half your base health. Only damage to the player uses your difficulty; enemies hitting each other use the Medium value. Damage classes have no names, so they are listed by ID.</p>
-  <div class="cols2"><p><b>Typical scaling against Medium:</b> Easy ×${num(ratio(0))}, Hard ×${num(ratio(2))}, Lethal ×${num(ratio(3))} (medians over ${dc.length} classes).</p>
-  <p><b>Block damage</b> is what a blocked hit takes from your 100 block points. <b>NG+</b> values replace the base values in New Game+.</p></div>
-  <div class="toolbar">${seg('dd', DIFFS.map((x, i) => [i, x]), state.dmgDiff)}
-  <label class="check"><input type="checkbox" id="dmg-special" ${state.dmgHideSpecial ? 'checked' : ''}> Hide classes that deal no damage or kill outright</label></div>
+  const ratio = i => num(median(dc.map(c => c.hit_points[i] / c.hit_points[1])));
+  return `<h1>Damage</h1>` + intro(`How much damage enemy attacks do at each Enemy Damage setting. You start with 100 health, so 50 is half of it. Compared to Medium, a typical attack does ×${ratio(0)} on Easy, ×${ratio(2)} on Hard and ×${ratio(3)} on Lethal.`) + `
+  <p class="small muted">Only damage to you depends on difficulty. Enemies hitting each other use the Medium value. Block damage is what a blocked hit takes from your 100 block points. New Game+ values replace the normal ones. Damage classes have no names in the game, so they are listed by ID.</p>
+  <div class="toolbar">${field('Highlight', seg('dd', 'Highlighted difficulty', DIFFS.map((x, i) => [i, x]), state.dmgDiff))}
+  <label class="check"><input type="checkbox" id="dmg-special" ${state.dmgHideSpecial ? 'checked' : ''}> Hide classes that do no damage or kill outright</label></div>
   <div id="dmg-table">${dmgTable()}</div>`;
 }
 function bindDamage(root) {
   const redraw = () => { const box = root.querySelector('#dmg-table'); box.innerHTML = dmgTable(); bindSorting(box); };
-  root.querySelectorAll('[data-seg="dd"]').forEach(b => b.addEventListener('click', () => {
-    state.dmgDiff = +b.dataset.value; root.querySelectorAll('[data-seg="dd"]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); redraw();
-  }));
+  bindSeg(root, 'dd', v => { state.dmgDiff = +v; redraw(); });
   root.querySelector('#dmg-special').addEventListener('change', e => { state.dmgHideSpecial = e.target.checked; redraw(); });
 }
 
 /* ---------- about ---------- */
 function viewAbout() {
-  return `<h2>About the data</h2>
-  <p>All values are for game version ${esc(DATA.version)}. Later patches may change them.</p>
-  <h3>How to read the numbers</h3>
+  return `<h1>About</h1>` + intro(`Values are for game version ${esc(DATA.version)} and may change in later patches.`) + `
+  <h2>Reading the numbers</h2>
+  <p>Stats start at zero and add up from everything you have equipped or unlocked. Chance stats are the chance itself, so Charm of Fortitude's +10% Lethal Damage Survival Chance is exactly a 10% chance. Scale and Mod stats change something by that percentage. Flat stats add to a value the game sets elsewhere, such as your 100 starting health or the base parry windows.</p>
+  <p>Bows, the Tanegashima, the Yari, Kusarigama and Odachi, the Tanto, bombs and one cursed mask have base stats of their own. Upgrades add to them, and the New Game+ upgrade adds to the last level.</p>
+  <p>Stat and perk names such as <code>AlignedPerfectParryWindowModEasy</code> are the game's internal names.</p>
+  <h2>Not covered</h2>
   <ul>
-    <li><b>Every stat starts at zero and is the sum of everything that adds to it</b>: equipped gear, charms, upgrades and skills. No stat has a hidden starting value. What zero means depends on the stat:
-      <ul>
-        <li><b>Chances</b> are the chance itself. Charm of Fortitude's +10% Lethal Damage Survival Chance is a 10% chance, and without it there is none.</li>
-        <li><b>Scales and Mods</b> change something by that fraction: +25% Melee Damage Scale means 25% more melee damage, and zero means no change.</li>
-        <li><b>Flat stats</b> add to something the game sets elsewhere: Maximum Health adds to your 100 starting health, the parry window mods add to the window table, and weapon damage stats add to each attack's own damage.</li>
-      </ul></li>
-    <li><b>Items have base values.</b> Bows, the Tanegashima, the Yari, Kusarigama and Odachi, the Tanto, bombs and one cursed mask carry their own stats, shown in the Base column. Upgrades add to them.</li>
-    <li><b>Upgrade levels add up</b>, with New Game+ on top of the last level.</li>
-    <li>Stat and perk names such as <code>AlignedPerfectParryWindowModEasy</code> are the game's own internal names.</li>
+    <li>The damage of each player attack. The katana and dual katana set damage per move.</li>
+    <li>Starting ammo limits.</li>
+    <li>Which enemy attack uses which damage class.</li>
+    <li>The in-game names of skills.</li>
   </ul>
-  <h3>What is not covered or not certain</h3>
-  <ul>
-    <li>The damage of each individual player attack (the katana and dual katana have no base damage stat; their damage is set per move), and starting ammo limits.</li>
-    <li>Which enemy attack uses which damage class, and the in-game names of skills.</li>
-    <li>Labels marked as likely or unidentified are best guesses, not confirmed.</li>
-  </ul>`;
+  <h2>Unused content</h2>
+  <p>Charm of Doubling would double the effect of a minor charm when it is the only minor charm of its category. It exists only as a name and description. Nothing in this version grants it, so the loadout builder ignores it.</p>`;
 }
 
 /* ---------- loadout ---------- */
@@ -468,8 +447,7 @@ function loadoutSources(L) {
   const addFamily = (f, lvl) => {
     if (!f || lvl < 0) return;
     const i = clampLevel(f.levels.length, lvl);
-    out.push({ name: f.name, level: f.levels[i],
-      stats: f.stats.map(s => ({ stat: s.stat, fmt: s.fmt, value: s.values[i] })).filter(s => s.value),
+    out.push({ name: f.name, stats: f.stats.map(s => ({ stat: s.stat, fmt: s.fmt, value: s.values[i] })).filter(s => s.value),
       perks: f.extras.slice(0, i + 1).flat().filter(b => b.kind === 'perk').map(b => b.text) });
   };
   addFamily(DATA.armor.find(a => a.key === L.chest), L.chestLvl);
@@ -479,12 +457,11 @@ function loadoutSources(L) {
     const c = DATA.charms.find(x => x.name === slot.name);
     if (!c) continue;
     const i = clampLevel(c.levels, slot.lvl);
-    out.push({ name: c.name, level: charmLevels(c)[i], charm: c,
-      stats: c.stats.map(s => ({ stat: s.stat, fmt: s.fmt, value: s.values[i] })).filter(s => s.value),
+    out.push({ name: c.name, stats: c.stats.map(s => ({ stat: s.stat, fmt: s.fmt, value: s.values[i] })).filter(s => s.value),
       perks: c.perks_by_level.slice(0, i + 1).flat() });
   }
   const hp = DATA.progression.health.slice(0, L.health).reduce((a, b) => a + b, 0);
-  if (hp) out.push({ name: `Health upgrades (${L.health} of ${DATA.progression.health.length})`, level: '', stats: [{ stat: 'MaximumHealth', fmt: 'raw', value: hp }], perks: [] });
+  if (hp) out.push({ name: 'Health upgrades', stats: [{ stat: 'MaximumHealth', fmt: 'raw', value: hp }], perks: [] });
   return out;
 }
 function loadoutTotals(sources) {
@@ -505,43 +482,44 @@ function loadoutResults() {
   const parry = w.parry + v(`ParryWindowMod${b}`);
   const pp = w.perfect_parry + v(`PerfectParryWindowMod${b}`), ppAligned = pp + v(`AlignedPerfectParryWindowMod${b}`);
   const pd = w.perfect_dodge + v(`PerfectDodgeWindowMod${b}`), pdAligned = pd + v(`AlignedPerfectDodgeWindowMod${b}`);
-  const win = (s, aligned) => `${frames(s)} f<small>${ms(s)} ms${aligned !== undefined && frames(aligned) !== frames(s) ? `, ${frames(aligned)} f aligned` : ''}</small>`;
-  const cells = [
-    ['Max health', `${num(base.hp + v('MaximumHealth'))}<small>${num(base.hp)} base${v('MaximumHealth') ? ` + ${num(v('MaximumHealth'))}` : ''}</small>`],
-    ['Block points', `${num(base.blkp)}<small>guard meter</small>`],
+  const win = (s, aligned) => `<b>${frames(s)} f</b> <span class="muted">${ms(s)} ms${aligned !== undefined && frames(aligned) !== frames(s) ? `, ${frames(aligned)} f with an aligned weapon` : ''}</span>`;
+  const rows = [
+    ['Max health', `<b>${num(base.hp + v('MaximumHealth'))}</b>`],
+    ['Block points', `<b>${num(base.blkp)}</b>`],
     [`Parry (${DIFFS[d]})`, win(parry)],
     [`Perfect Parry (${DIFFS[d]})`, win(pp, ppAligned)],
     [`Perfect Dodge (${DIFFS[d]})`, win(pd, pdAligned)],
-    ...DAMAGE_STATS.filter(([k]) => v(k)).map(([k, label]) => [`${label} damage`, `${num(v(k))}<small>${k.startsWith('Ranged') ? 'per hit' : 'added to each hit'}</small>`]),
+    ...DAMAGE_STATS.filter(([k]) => v(k)).map(([k, label]) => [`${label} damage`, `<b>${num(v(k))}</b> <span class="muted">${k.startsWith('Ranged') ? 'per hit' : 'added to each hit'}</span>`]),
   ];
   const warnings = [];
   const equipped = L.charms.map(s => DATA.charms.find(c => c.name === s.name)).filter(Boolean);
   const majors = equipped.filter(c => c.major).length;
-  if (majors > MAJOR_SLOTS) warnings.push(`You have ${majors} Major charms equipped, but at most ${MAJOR_SLOTS} charm slots can be upgraded to Major.`);
-  const dupes = equipped.map(c => c.name).filter((n, i, a) => a.indexOf(n) !== i);
-  if (dupes.length) warnings.push(`${[...new Set(dupes)].join(', ')} is equipped more than once; the game allows each charm once, so it is counted twice here.`);
+  if (majors > MAJOR_SLOTS) warnings.push(`${majors} Major charms equipped. The game allows ${MAJOR_SLOTS}.`);
+  const dupes = [...new Set(equipped.map(c => c.name).filter((n, i, a) => a.indexOf(n) !== i))];
+  if (dupes.length) warnings.push(`${dupes.join(', ')} is equipped twice. The game allows each charm once.`);
   const unused = equipped.filter(c => !c.obtainable).map(c => c.name);
-  if (unused.length) warnings.push(`${unused.join(', ')}: no task in the game awards ${unused.length > 1 ? 'these charms' : 'this charm'}.`);
+  if (unused.length) warnings.push(`${unused.join(', ')} can't be earned in the game.`);
   const perks = new Map();
   for (const s of sources) for (const p of s.perks) { if (!perks.has(p)) perks.set(p, []); if (!perks.get(p).includes(s.name)) perks.get(p).push(s.name); }
-  const rows = [...T.values()].sort((a, b) => a.stat.localeCompare(b.stat)).map(e => [
+  const statRows = [...T.values()].sort((a, b) => a.stat.localeCompare(b.stat)).map(e => [
     { html: statCell(e.stat), key: e.stat },
-    { html: `<b>${fmtVal(e.fmt, e.value)}</b>`, key: e.value },
+    { html: fmtVal(e.fmt, e.value), key: e.value },
     { html: e.from.map(f => `${esc(f.name)} <span class="muted">${fmtVal(f.fmt, f.value)}</span>`).join('<br>') }]);
-  return `<dl class="readout">${cells.map(([k, val]) => `<div><dt>${esc(k)}</dt><dd>${val}</dd></div>`).join('')}</dl>
+  return `<table class="summary"><tbody>${rows.map(([k, val]) => `<tr><th scope="row">${esc(k)}</th><td>${val}</td></tr>`).join('')}</tbody></table>
     ${warnings.map(x => `<p class="warn">${esc(x)}</p>`).join('')}
-    <h3>Perks</h3>${perks.size ? `<p>${[...perks].map(([p, from]) => `<span class="tag lily" title="${esc(from.join(', '))}">${esc(human(p))}</span>`).join(' ')}</p>` : '<p class="muted">No perks from this loadout.</p>'}
-    <h3>All stats</h3><p class="note">Every stat starts at zero; these are the sums of everything equipped. Window stats are listed per difficulty band, and the windows above use the one for your difficulty.</p>
-    ${rows.length ? table([{ label: 'Stat' }, { label: 'Total', num: 1 }, { label: 'From' }], rows, { sortable: true }) : '<p class="muted">Nothing equipped adds a stat yet.</p>'}`;
+    <h2>Perks</h2>${perks.size ? `<p>${[...perks].map(([p, from]) => `<span class="tag" title="${esc(from.join(', '))}">${esc(human(p))}</span>`).join(' ')}</p>` : '<p class="muted">None.</p>'}
+    <h2>Stat totals</h2>
+    ${statRows.length ? table([{ label: 'Stat' }, { label: 'Total', num: 1 }, { label: 'From' }], statRows, { sortable: true }) : '<p class="muted">Nothing equipped changes a stat.</p>'}
+    <p class="small muted">Window stats are listed per difficulty band. The windows above use the band for your difficulty.</p>`;
 }
 function levelSelect(id, labels, current, label, allowNone) {
   const opts = (allowNone ? [[-1, 'Not owned']] : []).concat(labels.map((l, i) => [i, l]));
-  return `<select id="${esc(id)}" data-level aria-label="${esc(label)}">${opts.map(([i, l]) => `<option value="${i}" ${+current === i ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+  return `<select id="${esc(id)}" aria-label="${esc(label)}">${opts.map(([i, l]) => `<option value="${i}" ${+current === i ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
 }
 function charmSelect(i, current) {
   const cats = [...new Set(DATA.charms.map(c => c.category))];
-  return `<select id="charm-${i}" data-charm="${i}" aria-label="Charm slot ${i + 1}"><option value="">Empty slot</option>${cats.map(cat => `<optgroup label="${esc(cat)}">${DATA.charms.filter(c => c.category === cat).map(c =>
-    `<option value="${esc(c.name)}" ${c.name === current ? 'selected' : ''}>${esc(c.name)}${c.major ? ' (Major)' : ''}${c.obtainable ? '' : ' (unused)'}</option>`).join('')}</optgroup>`).join('')}</select>`;
+  return `<select id="charm-${i}" data-charm="${i}" aria-label="Charm slot ${i + 1}"><option value="">Empty</option>${cats.map(cat => `<optgroup label="${esc(cat)}">${DATA.charms.filter(c => c.category === cat).map(c =>
+    `<option value="${esc(c.name)}" ${c.name === current ? 'selected' : ''}>${esc(c.name)}${c.major ? ' (major)' : ''}${c.obtainable ? '' : ' (unused)'}</option>`).join('')}</optgroup>`).join('')}</select>`;
 }
 function viewLoadout() {
   loadout = loadLoadout();
@@ -549,21 +527,21 @@ function viewLoadout() {
   const fam = (list, key) => list.find(f => f.key === key);
   const chest = fam(DATA.armor, L.chest), mask = fam(DATA.armor, L.mask);
   const weaponRows = kind => DATA.weapons.filter(w => w.kind === kind).map(w =>
-    `<div class="slot"><span>${esc(w.name)}</span>${levelSelect(`w-${w.key}`, w.levels, L.weapons[w.key] ?? 0, `${w.name} upgrade level`, true)}</div>`).join('');
-  return `<h2>Loadout</h2><p>Put together your equipment the way you would in the game and see the full stats it adds up to. Your loadout is kept in this browser; use the link to share it.</p>
+    `<div class="slot"><span>${esc(w.name)}</span>${levelSelect(`w-${w.key}`, w.levels, L.weapons[w.key] ?? 0, `${w.name} level`, true)}</div>`).join('');
+  return `<h1>Loadout</h1>` + intro('Choose your gear to see the totals. The loadout is saved in this browser.') + `
   <div class="loadout">
     <form class="slots" id="slots" onsubmit="return false">
-      <fieldset><legend>Difficulty</legend>${seg('ldiff', DIFFS.map((x, i) => [i, x]), L.diff)}</fieldset>
+      <fieldset><legend>Difficulty</legend>${seg('ldiff', 'Difficulty', DIFFS.map((x, i) => [i, x]), L.diff)}</fieldset>
       <fieldset><legend>Armor</legend>
         <div class="slot"><select id="chest" aria-label="Chest armor">${chestOptions().map(a => `<option value="${esc(a.key)}" ${a.key === L.chest ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
-        <span id="chest-level">${chest ? levelSelect('chest-lvl', chest.levels, L.chestLvl, 'Chest armor upgrade level') : ''}</span></div>
+        <span id="chest-level">${chest ? levelSelect('chest-lvl', chest.levels, L.chestLvl, 'Chest armor level') : ''}</span></div>
         <div class="slot"><select id="mask" aria-label="Mask"><option value="">Mask without stats</option>${maskOptions().map(a => `<option value="${esc(a.key)}" ${a.key === L.mask ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
         <span id="mask-level">${mask ? levelSelect('mask-lvl', mask.levels, L.maskLvl, 'Mask level') : ''}</span></div>
       </fieldset>
       <fieldset><legend>Charms</legend>
         ${L.charms.map((s, i) => { const c = DATA.charms.find(x => x.name === s.name);
-          return `<div class="slot">${charmSelect(i, s.name)}<span id="charm-level-${i}">${c ? levelSelect(`charm-lvl-${i}`, charmLevels(c), s.lvl, `Charm slot ${i + 1} upgrade level`) : ''}</span></div>`; }).join('')}
-        <p class="note">Six slots, up to four of them Major.</p>
+          return `<div class="slot">${charmSelect(i, s.name)}<span id="charm-level-${i}">${c ? levelSelect(`charm-lvl-${i}`, charmLevels(c), s.lvl, `Charm slot ${i + 1} level`) : ''}</span></div>`; }).join('')}
+        <p class="small muted">6 slots. Up to 4 can hold major charms.</p>
       </fieldset>
       <fieldset><legend>Melee weapons</legend>${weaponRows('Melee weapons')}</fieldset>
       <fieldset><legend>Ranged weapons</legend>${weaponRows('Ranged weapons')}</fieldset>
@@ -571,31 +549,29 @@ function viewLoadout() {
       <fieldset><legend>Health upgrades</legend>
         <div class="slot"><input type="range" id="health" min="0" max="${DATA.progression.health.length}" value="${L.health}" aria-label="Health upgrades collected"><output id="health-out">${L.health}</output></div>
       </fieldset>
-      <div class="actions"><button type="button" id="share">Copy link to this loadout</button><button type="button" id="reset" class="quiet">Start over</button></div>
-      <p class="note" id="share-note" aria-live="polite"></p>
+      <div class="actions"><button type="button" class="action" id="share">Copy share link</button><button type="button" class="action secondary" id="reset">Reset</button></div>
+      <p class="small muted" id="share-note" aria-live="polite"></p>
     </form>
-    <section class="results" id="results" aria-live="polite" aria-label="Loadout totals">${loadoutResults()}</section>
+    <section id="results" aria-live="polite" aria-label="Loadout totals">${loadoutResults()}</section>
   </div>`;
 }
 function bindLoadout(root) {
   const redraw = () => { saveLoadout(); const box = root.querySelector('#results'); box.innerHTML = loadoutResults(); bindSorting(box); };
-  const swapLevel = (spanId, f, labels, current, id, label) => { root.querySelector(spanId).innerHTML = f ? levelSelect(id, labels, current, label) : ''; };
-  root.querySelectorAll('[data-seg="ldiff"]').forEach(b => b.addEventListener('click', () => {
-    loadout.diff = +b.dataset.value; root.querySelectorAll('[data-seg="ldiff"]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); redraw();
-  }));
+  const swapLevel = (spanId, f, labels, id, label) => { root.querySelector(spanId).innerHTML = f ? levelSelect(id, labels, 0, label) : ''; };
+  bindSeg(root, 'ldiff', v => { loadout.diff = +v; redraw(); });
   root.querySelector('#slots').addEventListener('change', e => {
     const t = e.target;
     if (t.id === 'chest') {
       loadout.chest = t.value; loadout.chestLvl = 0;
-      const f = DATA.armor.find(a => a.key === t.value); swapLevel('#chest-level', f, f && f.levels, 0, 'chest-lvl', 'Chest armor upgrade level');
+      const f = DATA.armor.find(a => a.key === t.value); swapLevel('#chest-level', f, f && f.levels, 'chest-lvl', 'Chest armor level');
     } else if (t.id === 'chest-lvl') loadout.chestLvl = +t.value;
     else if (t.id === 'mask') {
       loadout.mask = t.value; loadout.maskLvl = 0;
-      const f = DATA.armor.find(a => a.key === t.value); swapLevel('#mask-level', f, f && f.levels, 0, 'mask-lvl', 'Mask level');
+      const f = DATA.armor.find(a => a.key === t.value); swapLevel('#mask-level', f, f && f.levels, 'mask-lvl', 'Mask level');
     } else if (t.id === 'mask-lvl') loadout.maskLvl = +t.value;
     else if (t.dataset.charm !== undefined) {
       const i = +t.dataset.charm; loadout.charms[i] = { name: t.value, lvl: 0 };
-      const c = DATA.charms.find(x => x.name === t.value); swapLevel(`#charm-level-${i}`, c, c && charmLevels(c), 0, `charm-lvl-${i}`, `Charm slot ${i + 1} upgrade level`);
+      const c = DATA.charms.find(x => x.name === t.value); swapLevel(`#charm-level-${i}`, c, c && charmLevels(c), `charm-lvl-${i}`, `Charm slot ${i + 1} level`);
     } else if (t.id.startsWith('charm-lvl-')) loadout.charms[+t.id.slice(10)].lvl = +t.value;
     else if (t.id.startsWith('w-')) loadout.weapons[t.id.slice(2)] = +t.value;
     else return;
@@ -605,7 +581,7 @@ function bindLoadout(root) {
   root.querySelector('#share').addEventListener('click', async () => {
     const link = shareLink(), note = root.querySelector('#share-note');
     try { await navigator.clipboard.writeText(link); note.textContent = 'Link copied.'; }
-    catch (e) { note.innerHTML = `Copy this link: <input type="text" readonly value="${esc(link)}" aria-label="Loadout link" style="width:100%">`; }
+    catch (e) { note.innerHTML = `<input type="text" readonly value="${esc(link)}" aria-label="Share link" style="width:100%">`; }
   });
   root.querySelector('#reset').addEventListener('click', () => {
     try { localStorage.removeItem(LOADOUT_KEY); } catch (e) { /* storage unavailable */ }
@@ -614,12 +590,15 @@ function bindLoadout(root) {
 }
 
 /* ---------- routing ---------- */
-const RENDER = { combat: [viewCombat, bindCombat], armor: [viewArmor, root => bindSplit(root, 'armor', k => familyDetail(DATA.armor.find(f => f.key === k)))(state.armor)],
+const RENDER = {
+  combat: [viewCombat, bindCombat], loadout: [viewLoadout, bindLoadout],
+  armor: [viewArmor, root => bindSplit(root, 'armor', k => familyDetail(DATA.armor.find(f => f.key === k)))(state.armor)],
   weapons: [viewWeapons, root => bindSplit(root, 'weapon', k => familyDetail(DATA.weapons.find(f => f.key === k)))(state.weapon)],
-  charms: [viewCharms, bindCharms], skills: [viewSkills, () => {}], enemies: [viewEnemies, bindEnemies], duels: [viewDuels, () => {}],
-  damage: [viewDamage, bindDamage], about: [viewAbout, () => {}], loadout: [viewLoadout, bindLoadout] };
+  charms: [viewCharms, bindCharms], skills: [viewSkills, () => {}], enemies: [viewEnemies, bindEnemies],
+  duels: [viewDuels, () => {}], damage: [viewDamage, bindDamage], about: [viewAbout, () => {}],
+};
 function route() {
-  const id = (location.hash.slice(1).split('=')[0] || 'combat');
+  const id = location.hash.slice(1).split('=')[0] || 'combat';
   const view = RENDER[id] ? id : 'combat';
   document.querySelectorAll('#nav a').forEach(a => a.setAttribute('aria-current', a.dataset.view === view ? 'page' : 'false'));
   const main = document.getElementById('main');
@@ -627,12 +606,18 @@ function route() {
   RENDER[view][1](main);
   bindSorting(main);
   const title = VIEWS.find(v => v[0] === view)[1];
-  document.title = view === 'combat' ? 'Ghost of Yōtei by the numbers' : `${title}: Ghost of Yōtei by the numbers`;
+  document.title = `${title} - Ghost of Yōtei numbers`;
 }
 function start() {
-  document.getElementById('nav').innerHTML = VIEWS.map(([id, label]) => `<a href="#${id}" data-view="${id}">${esc(label)}</a>`).join('');
-  window.addEventListener('hashchange', () => { route(); document.getElementById('main').focus({ preventScroll: true }); window.scrollTo({ top: document.querySelector('.sections').offsetTop }); });
+  document.getElementById('nav').innerHTML = NAV.map(([group, items]) =>
+    `<div class="group"><span class="group-name">${esc(group)}</span>${items.map(([id, label]) => `<a href="#${id}" data-view="${id}">${esc(label)}</a>`).join('')}</div>`).join('');
+  window.addEventListener('hashchange', () => {
+    route();
+    const main = document.getElementById('main');
+    main.focus({ preventScroll: true });
+    window.scrollTo({ top: 0 });
+  });
   fetch('data.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => { DATA = d; route(); })
-    .catch(e => { document.getElementById('main').innerHTML = `<p>The data file did not load (${esc(e.message)}). Reload the page to try again.</p>`; });
+    .catch(e => { document.getElementById('main').innerHTML = `<p>The data didn't load (${esc(e.message)}). Reload the page to try again.</p>`; });
 }
 start();
