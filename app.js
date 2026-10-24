@@ -26,7 +26,13 @@ function fmtVal(fmt, v) {
 }
 const frames = sec => Math.round(sec * FPS);
 const ms = sec => Math.round(sec * 1000);
-function at30(f) { return f % 2 === 0 ? `exactly ${f / 2}` : `${Math.floor(f / 2)} or ${Math.ceil(f / 2)}`; }
+/* At 30 fps a press can only register every 33 ms, so a window of f frames at 60 fps gives
+   either floor(f/2) or ceil(f/2) 30 fps frames depending on where the strike falls; the
+   average is unchanged. Returns the real time in ms. */
+function at30(f) {
+  const lo = Math.round(Math.floor(f / 2) * 1000 / 30), hi = Math.round(Math.ceil(f / 2) * 1000 / 30);
+  return lo === hi ? `always ${lo} ms` : `${lo} or ${hi} ms`;
+}
 const statCell = s => `<span class="stat">${esc(human(s))}<span class="internal">${esc(s)}</span></span>`;
 
 /* sortable table: cols = [{label, num}], rows = [[{html, key}]] */
@@ -95,7 +101,7 @@ function rulerLanes() {
 function rulerFoot() {
   const w = windowsNow();
   const fp = frames(w.perfect), fpar = frames(w.parry);
-  return `<span>At 30 fps the Perfect Parry window holds <strong>${at30(fp)}</strong> frames, the Parry window <strong>${at30(fpar)}</strong>.</span>`;
+  return `<span>At 30 fps the windows are just as long on average, but less consistent: Perfect Parry gives you <strong>${at30(fp)}</strong> per attack, Parry <strong>${at30(fpar)}</strong>.</span>`;
 }
 function viewCombat() {
   const c = DATA.combat, ws = c.windows;
@@ -141,7 +147,8 @@ function viewCombat() {
   html += `<h3>Why a window can feel shorter than the table</h3>
   <p>A window can never open earlier than about 1/6 s after a point early in the attacker's animation, so fast attacks get less than the table gives; this hits the long Easy Parry window hardest. There is also a small low-health extension (+0.05 s Parry, +0.01 s Perfect Parry, times a scale) whose trigger is not identified.</p>
   <h3>30 fps versus 60 fps</h3>
-  <p>The windows are defined in seconds and the game never adjusts them for frame rate. Your press is stamped with the game clock of the frame that processes it, so it can only land on a frame boundary. At 60 fps every window is a whole number of frames; at 30 fps most come out as one of two frame counts depending on where the hit falls between frames. On Hard and Lethal the 50 ms Perfect Parry is always 3 frames at 60 fps, but 1 or 2 frames at 30 fps.</p>`;
+  <p>The windows are defined in seconds and the game does not adjust them for frame rate. Your press is timed by the frame that handles it, so it can only register every 16.7 ms at 60 fps and every 33.3 ms at 30 fps.</p>
+  <p>That does not halve the window at 30 fps: frames last twice as long, so the window covers half as many of them. What changes is consistency. At 60 fps every window is a whole number of frames, so it is the same length on every attack. At 30 fps most windows fall between frame counts, so you get a little less on some attacks and a little more on others, depending on where the strike lands between two frames. The 50 ms Perfect Parry on Hard and Lethal becomes 33 ms on half of attacks and 67 ms on the other half, still 50 ms on average. At 40 fps (25 ms frames) it is always 50 ms again.</p>`;
 
   html += `<h2>Weapon alignment</h2><p>Each weapon counters one enemy class. Being aligned means you have the counter weapon out at that moment.</p>`;
   html += table([{ label: 'Weapon' }, { label: 'Aligned against' }], c.alignment.map(a => [a.weapon, a.against]));
