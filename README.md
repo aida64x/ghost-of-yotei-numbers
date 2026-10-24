@@ -8,7 +8,8 @@ A reference site with the exact numbers behind Ghost of Yōtei (game version 1.5
 - armor, weapon, tool and charm values at every upgrade level, including New Game+;
 - skills, health, Spirit and carry-capacity upgrades;
 - enemy, duel and bounty-target health and block points;
-- enemy damage per difficulty.
+- enemy damage per difficulty;
+- a loadout builder that adds up every stat from your armor, charms, weapons, tools and health upgrades.
 
 Open the site: https://aida64x.github.io/ghost-of-yotei-numbers/
 

@@ -1,7 +1,7 @@
 'use strict';
 
 const VIEWS = [
-  ['combat', 'Combat'], ['armor', 'Armor'], ['weapons', 'Weapons and tools'], ['charms', 'Charms'],
+  ['combat', 'Combat'], ['loadout', 'Loadout'], ['armor', 'Armor'], ['weapons', 'Weapons and tools'], ['charms', 'Charms'],
   ['skills', 'Skills and progression'], ['enemies', 'Enemies'], ['duels', 'Duels and bounties'],
   ['damage', 'Damage'], ['about', 'About the data'],
 ];
@@ -414,13 +414,212 @@ function viewAbout() {
   </ul>`;
 }
 
+/* ---------- loadout ---------- */
+const CHARM_SLOTS = 6, MAJOR_SLOTS = 4;
+const LOADOUT_KEY = 'yotei-loadout-v1';
+let loadout = null;
+const DAMAGE_STATS = [['KatanaDamage', 'Katana'], ['DualKatanaDamage', 'Dual Katana'], ['SpearDamage', 'Yari'], ['KusarigamaDamage', 'Kusarigama'],
+  ['OdachiDamage', 'Odachi'], ['RangedDamageMediumBow', 'Hankyu'], ['RangedDamageLongbow', 'Yumi'], ['RangedDamageTanegashima', 'Tanegashima'], ['RangedDamagePistol', 'Tanzutsu']];
+
+const chestOptions = () => DATA.armor.filter(a => a.internal && a.internal.startsWith('gear_chest'));
+const maskOptions = () => DATA.armor.filter(a => a.internal && !a.internal.startsWith('gear_chest'));
+function defaultLoadout() {
+  const start = DATA.armor.find(a => a.internal === 'gear_chest_default') || chestOptions()[0];
+  return { diff: 1, chest: start ? start.key : '', chestLvl: 0, mask: '', maskLvl: 0,
+    weapons: Object.fromEntries(DATA.weapons.map(w => [w.key, 0])),
+    charms: Array.from({ length: CHARM_SLOTS }, () => ({ name: '', lvl: 0 })), health: 0 };
+}
+function loadLoadout() {
+  const L = defaultLoadout();
+  let src = null;
+  const m = location.hash.match(/^#loadout=([A-Za-z0-9_-]+)/);
+  if (m) {
+    try { src = JSON.parse(decodeURIComponent(escape(atob(m[1].replace(/-/g, '+').replace(/_/g, '/'))))); } catch (e) { src = null; }
+    history.replaceState(null, '', '#loadout');
+  }
+  if (!src) { try { src = JSON.parse(localStorage.getItem(LOADOUT_KEY) || 'null'); } catch (e) { src = null; } }
+  if (src && typeof src === 'object') {
+    for (const k of ['diff', 'chest', 'chestLvl', 'mask', 'maskLvl', 'health']) if (k in src) L[k] = src[k];
+    if (src.weapons && typeof src.weapons === 'object') Object.assign(L.weapons, src.weapons);
+    if (Array.isArray(src.charms)) src.charms.slice(0, CHARM_SLOTS).forEach((c, i) => { if (c && typeof c === 'object') L.charms[i] = { name: String(c.name || ''), lvl: +c.lvl || 0 }; });
+  }
+  L.diff = Math.min(3, Math.max(0, +L.diff || 0));
+  L.health = Math.min(DATA.progression.health.length, Math.max(0, +L.health || 0));
+  return L;
+}
+function saveLoadout() { try { localStorage.setItem(LOADOUT_KEY, JSON.stringify(loadout)); } catch (e) { /* storage unavailable */ } }
+function shareLink() {
+  // only what differs from the default loadout, so the link stays short
+  const def = defaultLoadout(), L = loadout, out = {};
+  for (const k of ['diff', 'chest', 'chestLvl', 'mask', 'maskLvl', 'health']) if (L[k] !== def[k]) out[k] = L[k];
+  const weapons = Object.fromEntries(Object.entries(L.weapons).filter(([k, v]) => v !== def.weapons[k]));
+  if (Object.keys(weapons).length) out.weapons = weapons;
+  const charms = L.charms.map(c => (c.name ? { name: c.name, lvl: c.lvl } : 0));
+  while (charms.length && !charms[charms.length - 1]) charms.pop();
+  if (charms.length) out.charms = charms;
+  const code = btoa(unescape(encodeURIComponent(JSON.stringify(out)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${location.href.split('#')[0]}#loadout=${code}`;
+}
+const clampLevel = (n, i) => Math.max(0, Math.min(+i || 0, n - 1));
+const charmLevels = c => Array.from({ length: c.levels }, (_, i) => i === 0 ? 'Base' : `+${i}`);
+
+function loadoutSources(L) {
+  const out = [];
+  const addFamily = (f, lvl) => {
+    if (!f || lvl < 0) return;
+    const i = clampLevel(f.levels.length, lvl);
+    out.push({ name: f.name, level: f.levels[i],
+      stats: f.stats.map(s => ({ stat: s.stat, fmt: s.fmt, value: s.values[i] })).filter(s => s.value),
+      perks: f.extras.slice(0, i + 1).flat().filter(b => b.kind === 'perk').map(b => b.text) });
+  };
+  addFamily(DATA.armor.find(a => a.key === L.chest), L.chestLvl);
+  if (L.mask) addFamily(DATA.armor.find(a => a.key === L.mask), L.maskLvl);
+  for (const w of DATA.weapons) addFamily(w, L.weapons[w.key] ?? 0);
+  for (const slot of L.charms) {
+    const c = DATA.charms.find(x => x.name === slot.name);
+    if (!c) continue;
+    const i = clampLevel(c.levels, slot.lvl);
+    out.push({ name: c.name, level: charmLevels(c)[i], charm: c,
+      stats: c.stats.map(s => ({ stat: s.stat, fmt: s.fmt, value: s.values[i] })).filter(s => s.value),
+      perks: c.perks_by_level.slice(0, i + 1).flat() });
+  }
+  const hp = DATA.progression.health.slice(0, L.health).reduce((a, b) => a + b, 0);
+  if (hp) out.push({ name: `Health upgrades (${L.health} of ${DATA.progression.health.length})`, level: '', stats: [{ stat: 'MaximumHealth', fmt: 'raw', value: hp }], perks: [] });
+  return out;
+}
+function loadoutTotals(sources) {
+  const totals = new Map();
+  for (const s of sources) for (const x of s.stats) {
+    const e = totals.get(x.stat) || { stat: x.stat, value: 0, fmts: new Set(), from: [] };
+    e.value += x.value; e.fmts.add(x.fmt); e.from.push({ name: s.name, value: x.value, fmt: x.fmt });
+    totals.set(x.stat, e);
+  }
+  for (const e of totals.values()) e.fmt = e.fmts.has('window') ? 'window' : e.fmts.size === 1 ? [...e.fmts][0] : 'raw';
+  return totals;
+}
+function loadoutResults() {
+  const L = loadout, sources = loadoutSources(L), T = loadoutTotals(sources);
+  const v = k => (T.get(k) ? T.get(k).value : 0);
+  const d = L.diff, b = band(d), w = DATA.combat.windows[d];
+  const base = (DATA.enemies.player[d] && DATA.enemies.player[d].base) || { hp: 100, blkp: 100 };
+  const parry = w.parry + v(`ParryWindowMod${b}`);
+  const pp = w.perfect_parry + v(`PerfectParryWindowMod${b}`), ppAligned = pp + v(`AlignedPerfectParryWindowMod${b}`);
+  const pd = w.perfect_dodge + v(`PerfectDodgeWindowMod${b}`), pdAligned = pd + v(`AlignedPerfectDodgeWindowMod${b}`);
+  const win = (s, aligned) => `${frames(s)} f<small>${ms(s)} ms${aligned !== undefined && frames(aligned) !== frames(s) ? `, ${frames(aligned)} f aligned` : ''}</small>`;
+  const cells = [
+    ['Max health', `${num(base.hp + v('MaximumHealth'))}<small>${num(base.hp)} base${v('MaximumHealth') ? ` + ${num(v('MaximumHealth'))}` : ''}</small>`],
+    ['Block points', `${num(base.blkp)}<small>guard meter</small>`],
+    [`Parry (${DIFFS[d]})`, win(parry)],
+    [`Perfect Parry (${DIFFS[d]})`, win(pp, ppAligned)],
+    [`Perfect Dodge (${DIFFS[d]})`, win(pd, pdAligned)],
+    ...DAMAGE_STATS.filter(([k]) => v(k)).map(([k, label]) => [`${label} damage`, `${num(v(k))}<small>${k.startsWith('Ranged') ? 'per hit' : 'added to each hit'}</small>`]),
+  ];
+  const warnings = [];
+  const equipped = L.charms.map(s => DATA.charms.find(c => c.name === s.name)).filter(Boolean);
+  const majors = equipped.filter(c => c.major).length;
+  if (majors > MAJOR_SLOTS) warnings.push(`You have ${majors} Major charms equipped, but at most ${MAJOR_SLOTS} charm slots can be upgraded to Major.`);
+  const dupes = equipped.map(c => c.name).filter((n, i, a) => a.indexOf(n) !== i);
+  if (dupes.length) warnings.push(`${[...new Set(dupes)].join(', ')} is equipped more than once; the game allows each charm once, so it is counted twice here.`);
+  const unused = equipped.filter(c => !c.obtainable).map(c => c.name);
+  if (unused.length) warnings.push(`${unused.join(', ')}: no task in the game awards ${unused.length > 1 ? 'these charms' : 'this charm'}.`);
+  const perks = new Map();
+  for (const s of sources) for (const p of s.perks) { if (!perks.has(p)) perks.set(p, []); if (!perks.get(p).includes(s.name)) perks.get(p).push(s.name); }
+  const rows = [...T.values()].sort((a, b) => a.stat.localeCompare(b.stat)).map(e => [
+    { html: statCell(e.stat), key: e.stat },
+    { html: `<b>${fmtVal(e.fmt, e.value)}</b>`, key: e.value },
+    { html: e.from.map(f => `${esc(f.name)} <span class="muted">${fmtVal(f.fmt, f.value)}</span>`).join('<br>') }]);
+  return `<dl class="readout">${cells.map(([k, val]) => `<div><dt>${esc(k)}</dt><dd>${val}</dd></div>`).join('')}</dl>
+    ${warnings.map(x => `<p class="warn">${esc(x)}</p>`).join('')}
+    <h3>Perks</h3>${perks.size ? `<p>${[...perks].map(([p, from]) => `<span class="tag lily" title="${esc(from.join(', '))}">${esc(human(p))}</span>`).join(' ')}</p>` : '<p class="muted">No perks from this loadout.</p>'}
+    <h3>All stats</h3><p class="note">Every stat starts at zero; these are the sums of everything equipped. Window stats are listed per difficulty band, and the windows above use the one for your difficulty.</p>
+    ${rows.length ? table([{ label: 'Stat' }, { label: 'Total', num: 1 }, { label: 'From' }], rows, { sortable: true }) : '<p class="muted">Nothing equipped adds a stat yet.</p>'}`;
+}
+function levelSelect(id, labels, current, label, allowNone) {
+  const opts = (allowNone ? [[-1, 'Not owned']] : []).concat(labels.map((l, i) => [i, l]));
+  return `<select id="${esc(id)}" data-level aria-label="${esc(label)}">${opts.map(([i, l]) => `<option value="${i}" ${+current === i ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+}
+function charmSelect(i, current) {
+  const cats = [...new Set(DATA.charms.map(c => c.category))];
+  return `<select id="charm-${i}" data-charm="${i}" aria-label="Charm slot ${i + 1}"><option value="">Empty slot</option>${cats.map(cat => `<optgroup label="${esc(cat)}">${DATA.charms.filter(c => c.category === cat).map(c =>
+    `<option value="${esc(c.name)}" ${c.name === current ? 'selected' : ''}>${esc(c.name)}${c.major ? ' (Major)' : ''}${c.obtainable ? '' : ' (unused)'}</option>`).join('')}</optgroup>`).join('')}</select>`;
+}
+function viewLoadout() {
+  loadout = loadLoadout();
+  const L = loadout;
+  const fam = (list, key) => list.find(f => f.key === key);
+  const chest = fam(DATA.armor, L.chest), mask = fam(DATA.armor, L.mask);
+  const weaponRows = kind => DATA.weapons.filter(w => w.kind === kind).map(w =>
+    `<div class="slot"><span>${esc(w.name)}</span>${levelSelect(`w-${w.key}`, w.levels, L.weapons[w.key] ?? 0, `${w.name} upgrade level`, true)}</div>`).join('');
+  return `<h2>Loadout</h2><p>Put together your equipment the way you would in the game and see the full stats it adds up to. Your loadout is kept in this browser; use the link to share it.</p>
+  <div class="loadout">
+    <form class="slots" id="slots" onsubmit="return false">
+      <fieldset><legend>Difficulty</legend>${seg('ldiff', DIFFS.map((x, i) => [i, x]), L.diff)}</fieldset>
+      <fieldset><legend>Armor</legend>
+        <div class="slot"><select id="chest" aria-label="Chest armor">${chestOptions().map(a => `<option value="${esc(a.key)}" ${a.key === L.chest ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
+        <span id="chest-level">${chest ? levelSelect('chest-lvl', chest.levels, L.chestLvl, 'Chest armor upgrade level') : ''}</span></div>
+        <div class="slot"><select id="mask" aria-label="Mask"><option value="">Mask without stats</option>${maskOptions().map(a => `<option value="${esc(a.key)}" ${a.key === L.mask ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
+        <span id="mask-level">${mask ? levelSelect('mask-lvl', mask.levels, L.maskLvl, 'Mask level') : ''}</span></div>
+      </fieldset>
+      <fieldset><legend>Charms</legend>
+        ${L.charms.map((s, i) => { const c = DATA.charms.find(x => x.name === s.name);
+          return `<div class="slot">${charmSelect(i, s.name)}<span id="charm-level-${i}">${c ? levelSelect(`charm-lvl-${i}`, charmLevels(c), s.lvl, `Charm slot ${i + 1} upgrade level`) : ''}</span></div>`; }).join('')}
+        <p class="note">Six slots, up to four of them Major.</p>
+      </fieldset>
+      <fieldset><legend>Melee weapons</legend>${weaponRows('Melee weapons')}</fieldset>
+      <fieldset><legend>Ranged weapons</legend>${weaponRows('Ranged weapons')}</fieldset>
+      <fieldset><legend>Tools</legend>${weaponRows('Tools and other gear')}</fieldset>
+      <fieldset><legend>Health upgrades</legend>
+        <div class="slot"><input type="range" id="health" min="0" max="${DATA.progression.health.length}" value="${L.health}" aria-label="Health upgrades collected"><output id="health-out">${L.health}</output></div>
+      </fieldset>
+      <div class="actions"><button type="button" id="share">Copy link to this loadout</button><button type="button" id="reset" class="quiet">Start over</button></div>
+      <p class="note" id="share-note" aria-live="polite"></p>
+    </form>
+    <section class="results" id="results" aria-live="polite" aria-label="Loadout totals">${loadoutResults()}</section>
+  </div>`;
+}
+function bindLoadout(root) {
+  const redraw = () => { saveLoadout(); const box = root.querySelector('#results'); box.innerHTML = loadoutResults(); bindSorting(box); };
+  const swapLevel = (spanId, f, labels, current, id, label) => { root.querySelector(spanId).innerHTML = f ? levelSelect(id, labels, current, label) : ''; };
+  root.querySelectorAll('[data-seg="ldiff"]').forEach(b => b.addEventListener('click', () => {
+    loadout.diff = +b.dataset.value; root.querySelectorAll('[data-seg="ldiff"]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); redraw();
+  }));
+  root.querySelector('#slots').addEventListener('change', e => {
+    const t = e.target;
+    if (t.id === 'chest') {
+      loadout.chest = t.value; loadout.chestLvl = 0;
+      const f = DATA.armor.find(a => a.key === t.value); swapLevel('#chest-level', f, f && f.levels, 0, 'chest-lvl', 'Chest armor upgrade level');
+    } else if (t.id === 'chest-lvl') loadout.chestLvl = +t.value;
+    else if (t.id === 'mask') {
+      loadout.mask = t.value; loadout.maskLvl = 0;
+      const f = DATA.armor.find(a => a.key === t.value); swapLevel('#mask-level', f, f && f.levels, 0, 'mask-lvl', 'Mask level');
+    } else if (t.id === 'mask-lvl') loadout.maskLvl = +t.value;
+    else if (t.dataset.charm !== undefined) {
+      const i = +t.dataset.charm; loadout.charms[i] = { name: t.value, lvl: 0 };
+      const c = DATA.charms.find(x => x.name === t.value); swapLevel(`#charm-level-${i}`, c, c && charmLevels(c), 0, `charm-lvl-${i}`, `Charm slot ${i + 1} upgrade level`);
+    } else if (t.id.startsWith('charm-lvl-')) loadout.charms[+t.id.slice(10)].lvl = +t.value;
+    else if (t.id.startsWith('w-')) loadout.weapons[t.id.slice(2)] = +t.value;
+    else return;
+    redraw();
+  });
+  root.querySelector('#health').addEventListener('input', e => { loadout.health = +e.target.value; root.querySelector('#health-out').textContent = e.target.value; redraw(); });
+  root.querySelector('#share').addEventListener('click', async () => {
+    const link = shareLink(), note = root.querySelector('#share-note');
+    try { await navigator.clipboard.writeText(link); note.textContent = 'Link copied.'; }
+    catch (e) { note.innerHTML = `Copy this link: <input type="text" readonly value="${esc(link)}" aria-label="Loadout link" style="width:100%">`; }
+  });
+  root.querySelector('#reset').addEventListener('click', () => {
+    try { localStorage.removeItem(LOADOUT_KEY); } catch (e) { /* storage unavailable */ }
+    route();
+  });
+}
+
 /* ---------- routing ---------- */
 const RENDER = { combat: [viewCombat, bindCombat], armor: [viewArmor, root => bindSplit(root, 'armor', k => familyDetail(DATA.armor.find(f => f.key === k)))(state.armor)],
   weapons: [viewWeapons, root => bindSplit(root, 'weapon', k => familyDetail(DATA.weapons.find(f => f.key === k)))(state.weapon)],
   charms: [viewCharms, bindCharms], skills: [viewSkills, () => {}], enemies: [viewEnemies, bindEnemies], duels: [viewDuels, () => {}],
-  damage: [viewDamage, bindDamage], about: [viewAbout, () => {}] };
+  damage: [viewDamage, bindDamage], about: [viewAbout, () => {}], loadout: [viewLoadout, bindLoadout] };
 function route() {
-  const id = (location.hash.slice(1) || 'combat');
+  const id = (location.hash.slice(1).split('=')[0] || 'combat');
   const view = RENDER[id] ? id : 'combat';
   document.querySelectorAll('#nav a').forEach(a => a.setAttribute('aria-current', a.dataset.view === view ? 'page' : 'false'));
   const main = document.getElementById('main');
