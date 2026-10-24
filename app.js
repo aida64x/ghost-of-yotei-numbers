@@ -258,7 +258,7 @@ function charmTable() {
 }
 function viewCharms() {
   const cats = ['All', ...new Set(DATA.charms.map(c => c.category))];
-  return `<h2>Charms</h2><p>All 91 charms with the value of every effect at each upgrade level, from base to fully upgraded. Where the game says "a minor amount", this is the number it uses. Stats start at zero, so a bonus is the whole value: +10% Lethal Damage Survival Chance means a 10% chance.</p>
+  return `<h2>Charms</h2><p>All 91 charms with the value of every effect at each upgrade level, from base to fully upgraded. Where the game says "a minor amount", this is the number it uses. Every stat starts at zero, so a charm's number is the whole effect unless something else adds to the same stat: +10% Lethal Damage Survival Chance means a 10% chance.</p>
   <div class="toolbar">
     <div class="chips" role="group" aria-label="Category">${cats.map(c => `<button type="button" data-cat="${esc(c)}" aria-pressed="${c === state.charmCat}">${esc(c)}</button>`).join('')}</div>
     ${seg('size', [['all', 'All'], ['major', 'Major'], ['minor', 'Minor']], state.charmSize)}
@@ -396,7 +396,12 @@ function viewAbout() {
   <p>All values are for game version ${esc(DATA.version)}. Later patches may change them.</p>
   <h3>How to read the numbers</h3>
   <ul>
-    <li><b>Stats start at zero and add up.</b> A bonus such as Charm of Fortitude's +10% Lethal Damage Survival Chance is the whole value: nothing else sets that stat, so with the charm you have a 10% chance and without it none.</li>
+    <li><b>Every stat starts at zero and is the sum of everything that adds to it</b>: equipped gear, charms, upgrades and skills. No stat has a hidden starting value. What zero means depends on the stat:
+      <ul>
+        <li><b>Chances</b> are the chance itself. Charm of Fortitude's +10% Lethal Damage Survival Chance is a 10% chance, and without it there is none.</li>
+        <li><b>Scales and Mods</b> change something by that fraction: +25% Melee Damage Scale means 25% more melee damage, and zero means no change.</li>
+        <li><b>Flat stats</b> add to something the game sets elsewhere: Maximum Health adds to your 100 starting health, the parry window mods add to the window table, and weapon damage stats add to each attack's own damage.</li>
+      </ul></li>
     <li><b>Items have base values.</b> Bows, the Tanegashima, the Yari, Kusarigama and Odachi, the Tanto, bombs and one cursed mask carry their own stats, shown in the Base column. Upgrades add to them.</li>
     <li><b>Upgrade levels add up</b>, with New Game+ on top of the last level.</li>
     <li>Stat and perk names such as <code>AlignedPerfectParryWindowModEasy</code> are the game's own internal names.</li>
